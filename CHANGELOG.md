@@ -206,6 +206,20 @@ Escolhas conscientes que devem ser preservadas.
 
 ## 📜 HISTÓRICO
 
+### V307 — 2026-06-26 — Pendentes de aprovação visíveis na página Fornecedores
+**Por quê**: fornecedor recém-cadastrado pelo portal (auto-cadastro) não aparecia em lugar nenhum da página **Fornecedores** (`admin-fornecedores.html`). A lista geral (`GET /api/fornecedores`, `routes/diretos.js`) filtra `WHERE f.ativo = TRUE`, e o pendente nasce `ativo=FALSE` → era excluído. Pior: o KPI "Pendentes aprovação" contava `todosForn.filter(f => f.pendente_aprovacao)` sobre essa lista filtrada → **sempre 0**, falsa sensação de "sem pendências". A fila de aprovação só existia na Dashboard (`admin.html`, aba pendentes) — discoverability ruim, o usuário procurava na página Fornecedores.
+
+**Mudanças** (`admin-fornecedores.html` apenas — backend já estava correto):
+- `carregar()` agora busca `api.fornecedoresPendentes()` em paralelo (`Promise.all`) com a lista geral.
+- Novo bloco "⏳ Aguardando aprovação" (card destaque, antes da tabela) lista cada pendente com CNPJ, e-mail, contato, unidades solicitadas e botões **Aprovar / Rejeitar**.
+- Aprovar reusa `api.aprovarFornecedor` + `mostrarSenhaTemp` (modal copiável da senha temporária); Rejeitar reusa `api.rejeitarFornecedor` com motivo.
+- KPI "Pendentes aprovação" passa a contar de `pendentesForn.length` (fonte: `/pendentes`), não mais da lista filtrada por `ativo`.
+- Incluído `senha-temp-modal.js` na página.
+
+**Nota**: não alterou o filtro `ativo=TRUE` da rota de listagem (mantém a tabela principal só com ativos, como antes) — pendentes vêm da rota dedicada `/api/fornecedores/pendentes`.
+
+---
+
 ### V305 — 2026-06-01 — Validação automática de documentos com alertas visíveis
 **Por quê**: o serviço de validação (`validacao-documentos-service.js`) já extraía dados (CNPJ, valor, validade), mas salvava silenciosamente em `validacao_json`. Operador não via nada mesmo com inconsistências graves. Além disso, a rota de upload **via link público** sequer disparava a validação.
 

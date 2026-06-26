@@ -62,6 +62,8 @@
 
   <div class="kpi-row" id="kpis-fornecedores"></div>
 
+  <div id="pendentes-box" style="margin:18px 0 0"></div>
+
   <div class="card">
     <div class="between" style="margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div class="filters" style="gap:8px">
@@ -86,6 +88,7 @@
   </div>
 </div>
 
+<script src="/app/senha-temp-modal.js"></script>
 <script type="module">
 import { api, requireSession, clearSession, dataBR, toast } from '/app/api.js';
 const usuario = requireSession();
@@ -95,14 +98,20 @@ document.getElementById('userAvatar').textContent = (usuario.nome || '?').split(
 window.sair = () => { clearSession(); location.href = '/app/login.html'; };
 
 let todos = [];
+let pendentesForn = [];
 
 async function carregar() {
   try {
     // V253: carrega TODOS para computar KPIs corretos, então aplica filtro de tipo no client
-    const r = await api.fornecedores(null);
+    const [r, rp] = await Promise.all([
+      api.fornecedores(null),
+      api.fornecedoresPendentes().catch(() => ({ pendentes: [] })),
+    ]);
     todosForn = r.fornecedores || [];
     todos = todosForn;
+    pendentesForn = rp.pendentes || [];
     atualizarKPIs();
+    renderPendentes();
     renderizar();
   } catch (e) { toast('Erro: ' + e.message, 'erro'); }
 }
@@ -115,7 +124,7 @@ function atualizarKPIs() {
   const total = todosForn.length;
   const comPortal = todosForn.filter(f => f.tipo === 'com_portal').length;
   const externos = todosForn.filter(f => f.tipo !== 'com_portal').length;
-  const pendentes = todosForn.filter(f => f.pendente_aprovacao).length;
+  const pendentes = pendentesForn.length;  // V306: pendentes vem de /pendentes (lista geral filtra ativo=TRUE e os esconde)
   const inadimplentes = todosForn.filter(f => f.status_engajamento === 'inadimplente').length;
   const inativos = todosForn.filter(f => f.status_engajamento === 'inativo' || !f.ativo).length;
   document.getElementById('fornecedores-sub').textContent =
@@ -140,6 +149,60 @@ window.exportarFornecedoresCSV = () => {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `fornecedores-${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
+};
+
+function renderPendentes() {
+  const box = document.getElementById('pendentes-box');
+  if (!pendentesForn.length) { box.innerHTML = ''; return; }
+  const tipoLabel = { com_portal:'Com portal', externo_pj:'Externo PJ', externo_pf:'Externo PF' };
+  box.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--danger, #c0492f);background:var(--danger-soft, #fdeeea)">
+      <div class="between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0;display:flex;align-items:center;gap:8px">⏳ Aguardando aprovação
+          <span class="pill" style="background:var(--danger, #c0492f);color:#fff;font-size:11.5px;padding:2px 9px;border-radius:12px">${pendentesForn.length}</span>
+        </h3>
+        <span class="muted" style="font-size:12.5px">Novos cadastros pelo portal — aprove para criar o acesso do fornecedor.</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${pendentesForn.map(f => `
+          <div class="between" style="background:var(--surface, #fff);border:1px solid var(--border);border-radius:8px;padding:12px 14px;flex-wrap:wrap;gap:10px;align-items:center">
+            <div style="min-width:240px">
+              <strong>${f.razao_social}</strong>
+              <span class="tipo-chip ${f.tipo}" style="margin-left:6px">${tipoLabel[f.tipo] || f.tipo}</span>
+              <div class="muted" style="margin-top:3px;font-size:12.5px"><code>${f.documento || '—'}</code> · ${f.email || 'sem e-mail'} · ${f.telefone || 'sem telefone'}</div>
+              <div class="muted" style="margin-top:2px;font-size:11.5px">Contato: ${f.nome_contato || '—'} · Unidades: ${(f.unidades_siglas||[]).join(', ') || 'nenhuma'} · ${dataBR(f.criado_em)}</div>
+            </div>
+            <div class="filters" style="gap:6px">
+              <button class="primary" onclick="aprovarForn(${f.id}, '${(f.razao_social||'').replace(/'/g,"\'")}')">Aprovar</button>
+              <button onclick="rejeitarForn(${f.id})">Rejeitar</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
+window.aprovarForn = async (id, nome) => {
+  if (!confirm(`Aprovar fornecedor "${nome}"?\nIsso cria o usuário de acesso ao portal.`)) return;
+  try {
+    const r = await api.aprovarFornecedor(id, null);
+    if (r.senha_temporaria && window.mostrarSenhaTemp) {
+      window.mostrarSenhaTemp(`${nome} · usuário do portal criado`, r.senha_temporaria);
+    } else {
+      toast('Fornecedor aprovado', 'sucesso');
+    }
+    carregar();
+  } catch (e) { toast(e.message, 'erro'); }
+};
+
+window.rejeitarForn = async (id) => {
+  const motivo = prompt('Motivo da rejeição (mín. 5 caracteres):');
+  if (!motivo || motivo.trim().length < 5) return toast('Motivo obrigatório (mín. 5 caracteres)', 'erro');
+  try {
+    await api.rejeitarFornecedor(id, motivo.trim());
+    toast('Fornecedor rejeitado', 'sucesso');
+    carregar();
+  } catch (e) { toast(e.message, 'erro'); }
 };
 
 function renderizar() {
